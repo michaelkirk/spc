@@ -11,7 +11,7 @@ use geo::Point;
 use ndarray::Array2;
 use ndarray_npy::ReadNpyExt;
 use ordered_float::NotNan;
-use proj::Proj;
+use proj::{Proj, Transform};
 use serde::Deserialize;
 use typed_index_collections::TiVec;
 
@@ -168,16 +168,16 @@ pub fn load_venues(activity: Activity) -> Result<TiVec<VenueID, Venue>> {
     ))?)
     .deserialize()
     {
-        let rec: ZoneRow = rec?;
+        let mut rec: ZoneRow = rec?;
         // Let's check this while we're at it
         assert_eq!(venues.len(), rec.zonei);
 
-        let (x, y) = reproject.convert((rec.east, rec.north))?;
+        rec.transform(&reproject)?;
 
         venues.push(Venue {
             id: VenueID(venues.len()),
             activity,
-            location: Point::new(x, y),
+            location: Point::new(rec.east, rec.north),
             urn: rec.urn,
         });
     }
@@ -190,12 +190,29 @@ struct PopulationRow {
     zonei: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct ZoneRow {
     east: f32,
     north: f32,
     zonei: usize,
     urn: Option<usize>,
+}
+
+impl Transform<f32> for ZoneRow {
+    type Output = Self;
+
+    fn transform(&mut self, proj: &Proj) -> Result<(), proj::ProjError> {
+        let (east, north) = proj.convert((self.east, self.north))?;
+        self.east = east;
+        self.north = north;
+        Ok(())
+    }
+
+    fn transformed(&self, proj: &Proj) -> Result<Self::Output, proj::ProjError> {
+        let mut output = self.clone();
+        output.transform(proj)?;
+        Ok(output)
+    }
 }
 
 // Make things sum to 1
